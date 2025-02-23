@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Price Checker</title>
+    <link rel="stylesheet" href="style.css">  
+</head>
+<body>
+
+    <div class="container">
+        <h1>Stock Price Checker</h1>
+        
+        <!-- Login Form -->
+        <div id="login-form-container" class="form-container">
+            <h2>Login</h2>
+            <form id="login-form">
+                <input type="email" id="login-email" placeholder="Enter your email" required>
+                <input type="password" id="login-password" placeholder="Enter your password" required>
+                <button type="submit">Login</button>
+                <p>Don't have an account? <a href="javascript:void(0)" onclick="showRegisterForm()">Create one here</a></p>
+            </form>
+        </div>
+
+        <!-- Registration Form -->
+        <div id="register-form-container" class="form-container" style="display: none;">
+            <h2>Create Account</h2>
+            <form id="register-form">
+                <input type="email" id="register-email" placeholder="Enter your email" required>
+                <input type="password" id="register-password" placeholder="Enter your password" required>
+                <input type="tel" id="register-phone" placeholder="Enter your phone number (optional)">
+                <button type="submit">Register</button>
+                <p>Already have an account? <a href="javascript:void(0)" onclick="showLoginForm()">Login here</a></p>
+            </form>
+        </div>
+
+        <!-- Stock Price Checker -->
+        <div id="stock-price-container" style="display: none;">
+            <h2>Stock Price Checker</h2>
+            <input type="text" id="stockSymbol" placeholder="Enter Stock Symbol (e.g., AAPL)">
+            <button onclick="getStockPrice()">Get Price</button>
+            <p id="result"></p>
+            
+            <!-- Track Stock Button -->
+            <div id="trackButtonContainer" style="display: none;">
+                <button>Track this stock</button>
+            </div>
+        
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+    
+</body>
+</html>
