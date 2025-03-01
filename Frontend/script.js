@@ -38,9 +38,9 @@ const getStockPrice = async () => {
         if (data.price) {
             document.getElementById("result").innerHTML = 
                 `The current price of ${symbol.toUpperCase()} is $${data.price}`;
-            
-            // Show the "Track this stock" button after price is displayed
-            document.getElementById("trackButtonContainer").style.display = "block";
+
+            //then display track stock button
+            document.getElementById("trackButtonContainer").style.display = "block";  
         } else {
             document.getElementById("result").innerHTML = 
                 "Sorry, no price found for this symbol.";
@@ -52,56 +52,45 @@ const getStockPrice = async () => {
     }
 };
 
-const trackStock = async () => {
+const trackStock = async () =>{
     const symbol = document.getElementById("stockSymbol").value.trim();
-    
-    // If no symbol is entered, return early
+    const token = localStorage.getItem('token');
+
+    console.log("Token:", token);  // Check the token in the console
+    console.log("Symbol:", symbol);  // Check the symbol entered by the user
+
+
     if (!symbol) {
         alert("Please enter a stock symbol.");
         return;
     }
 
-    const token = localStorage.getItem('token'); // Get token from local storage (assumes JWT is stored here)
-
-    // If no token is found, alert the user to log in
     if (!token) {
         alert("You must be logged in to track stocks.");
         return;
     }
 
     try {
-        // Sending a request to add the stock to the user's tracked list
-        const response = await fetch('/api/track-stock', {
+        const response = await fetch('http://localhost:3000/api/track-stock', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`  // Send token for authentication
-            },
+                'Authorization': `Bearer ${token}` 
+              },
             body: JSON.stringify({ tickerSymbol: symbol })
         });
 
-        const data = await response.json();
-        
-        if (response.ok) {
-            alert(`${symbol.toUpperCase()} is now being tracked!`);
-            location.reload(); // Reload the page to reflect changes
-        } else {
-            alert('Error: ' + data.message);
-        }
-
-        // Optionally hide the "Track this stock" button after stock is tracked
-        document.getElementById("trackButtonContainer").style.display = "none";
-
-    } catch (error) {
-        alert(`Error: ${error.message}`);
+    const data = await response.json();
+    
+    if (response.ok) {
+        alert(`${symbol.toUpperCase()} is now being tracked!`);
+        document.getElementById("trackStockButton").style.display = "none"; // Hide button after tracking
+    } else {
+        alert('Error: ' + data.message);
     }
-};
-
-
-// Function to show the alert fields when "Track this stock" is clicked
-const showAlertFields = () => {
-    // Show the alert input fields
-    document.getElementById("alertFields").style.display = "block";
+} catch (error) {
+    alert(`Error: ${error.message}`);
+}
 };
 
 // Function to show the registration form and hide the login form
@@ -191,5 +180,3 @@ const handleLogin = async (event) => {
 document.getElementById("register-form").addEventListener("submit", handleRegistration);
 document.getElementById("login-form").addEventListener("submit", handleLogin);
 
-// Attach event listener to the track button
-document.getElementById("trackButtonContainer").addEventListener("click", trackStock);
