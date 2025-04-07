@@ -1,5 +1,5 @@
 require('dotenv').config({ path: './creds.env' }); // Load environment variables
-
+const runStockAlerts = require('./priceChecker');
 const express = require('express');
 const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
@@ -8,6 +8,9 @@ const yf = require('yahoo-finance2').default;
 const app = express();
 
 app.use(express.json()); // Parse JSON requests
+
+runStockAlerts();
+setInterval(runStockAlerts, 30 * 60 * 1000);
 
 app.use(express.static(__dirname + '/../Frontend'));
 
@@ -25,7 +28,6 @@ const db = mysql.createConnection({
 
 console.log(process.env.DB_USER);
 console.log(process.env.DB_PASS);
-
 
 db.connect(err => {
   if (err) {
@@ -112,7 +114,7 @@ app.get("/api/stock", async (req, res) => {
 // Track Stock
 app.post("/api/track-stock", (req, res) => {
   const { tickerSymbol } = req.body;  // Get ticker symbol from the body
-  const token = req.headers['authorization']; // Extract token from headers
+  const token = req.headers['authorization'].replace(/^Bearer\s/, ""); // Extract token from headers
 
   if (!token) {
     return res.status(401).json({ error: "Authentication required" });
@@ -131,16 +133,122 @@ app.post("/api/track-stock", (req, res) => {
 
     const userId = decoded.userId;
 
-    // Insert the tracked stock into the database
-    const query = "INSERT INTO tracked_stocks (user_id, ticker) VALUES (?, ?)";
-    db.query(query, [userId, tickerSymbol], (err, result) => {
-      if (err) {
-        console.error("Error tracking stock:", err);
-        return res.status(500).json({ error: "Failed to track the stock" });
-      }
-      res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
+    // Check if stock is already tracked
+    const checkQuery = "SELECT * FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
+    db.query(checkQuery, [userId, tickerSymbol], (err, results) => {
+        if (err) {
+            console.error("Error checking tracked stocks:", err);
+            return res.status(500).json({ error: "Failed to check tracked stocks" });
+        }
+
+        if (results.length > 0) {
+            return res.status(400).json({ message: "Stock is already being tracked" });
+        }
+
+        // Insert the tracked stock into the database
+        const query = "INSERT INTO tracked_stocks (user_id, ticker_symbol) VALUES (?, ?)";
+        db.query(query, [userId, tickerSymbol], (err, result) => {
+          if (err) {
+            console.error("Error tracking stock:", err);
+            return res.status(500).json({ error: "Failed to track the stock" });
+          }
+          res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
+        });
     });
   });
+});
+
+app.get("/tracked_stocks", (req, res) => {
+    const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
+
+    console.log("Received token in request header:", token);
+
+    if (!token) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
+
+
+    // Verify the JWT token and extract user info
+    jwt.verify(token, process.env.JWT_SECRET || 'supersecret', async (err, decoded) => {
+        if (err) {
+            console.error('Token verification failed:', err); // Log error here
+            return res.status(401).json({ error: "Invalid or expired token" });
+        }
+
+        const userId = decoded.userId;
+
+        // Query the database to get all tracked stocks for the logged-in user
+        const query = "SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?";
+        db.query(query, [userId], async (err, results) => {
+            if (err) {
+                console.error("Error retrieving tracked stocks:", err);
+                return res.status(500).json({ error: "Failed to retrieve tracked stocks" });
+            }
+
+            if (results.length === 0) {
+                return res.status(200).json([]); // No tracked stocks
+            }
+
+            // Now we need to fetch the stock prices
+            const stockSymbols = results.map(row => row.ticker_symbol);
+
+            // Fetch all stock prices asynchronously
+            const stockPricePromises = stockSymbols.map(symbol => {
+                return yf.quote(symbol)
+                    .then(stockData => ({
+                        ticker: symbol,
+                        price: stockData.regularMarketPrice || 'Price not available'
+                    }))
+                    .catch(() => ({
+                        ticker: symbol,
+                        price: 'Error fetching price'
+                    }));
+            });
+
+            try {
+                // Wait for all stock price fetches to complete
+                const stockPrices = await Promise.all(stockPricePromises);
+                res.status(200).json(stockPrices);
+            } catch (error) {
+                console.error('Error fetching stock prices:', error);
+                res.status(500).json({ error: 'Error fetching stock prices' });
+            }
+        });
+    });
+});
+
+//untrack stock
+app.post('/untrack-stock', (req, res) => {
+    const { tickerSymbol } = req.body;
+    const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
+
+    if (!token) {
+        return res.status(401).json({ error: "Authentication required" });
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET || 'supersecret', (err, decoded) => {
+        if (err) {
+            console.error('Token verification failed:', err);
+            return res.status(401).json({ error: "Invalid or expired token" });
+        }
+
+        const userId = decoded.userId;
+
+        // Remove the stock from the tracked stocks table
+        const query = "DELETE FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
+        db.query(query, [userId, tickerSymbol], (err, results) => {
+            if (err) {
+                console.error("Error untracking stock:", err);
+                return res.status(500).json({ error: "Failed to untrack stock" });
+            }
+
+            if (results.affectedRows === 0) {
+                return res.status(404).json({ message: "Stock not found in tracked stocks" });
+            }
+
+            res.status(200).json({ message: `${tickerSymbol} has been untracked` });
+        });
+    });
 });
 
 // Start server
