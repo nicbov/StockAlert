@@ -1,16 +1,39 @@
+//server file
+//Author: Nico Boving
+//Date: 4/29/2025
+//Purpose: This file is the main server file for the stock alert system.
+//It is responsible for handling all incoming requests and responses.
+//It also schedules the cron jobs for the stock alerts.
+
 require('dotenv').config({ path: './creds.env' }); // Load environment variables
 const runStockAlerts = require('./priceChecker');
 const express = require('express');
-const mysql = require('mysql2');
+const mysql = require('mysql2/promise');  
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const yf = require('yahoo-finance2').default;
 const app = express();
+const cron = require('node-cron');
 
 app.use(express.json()); // Parse JSON requests
 
-runStockAlerts();
-setInterval(runStockAlerts, 30 * 60 * 1000);
+// ⏰ Scheduled stock alert phases (Mon-Fri, EST)
+cron.schedule('30 9 * * 1-5', () => {
+  console.log('Running OPEN phase stock alerts...');
+  runStockAlerts('open');
+}, { timezone: 'America/New_York' });
+
+cron.schedule('30 12 * * 1-5', () => {
+  console.log('Running MIDDAY phase stock alerts...');
+  runStockAlerts('midday');
+}, { timezone: 'America/New_York' });
+
+cron.schedule('0 16 * * 1-5', () => {
+  console.log('Running CLOSE phase stock alerts...');
+  runStockAlerts('close');
+}, { timezone: 'America/New_York' });
+
+console.log('✅ Stock alert cron jobs scheduled.');
 
 app.use(express.static(__dirname + '/../Frontend'));
 
@@ -18,24 +41,19 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/../Frontend/index.html');
 });
 
-// Database connection
-const db = mysql.createConnection({
+// **Database connection pool**
+const db = mysql.createPool({
   host: 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASS || '',
-  database: 'stock_alert'
+  database: 'stock_alert',
+  waitForConnections: true,  // Wait for a connection if the pool is busy
+  connectionLimit: 10,       // Limit of concurrent connections
+  queueLimit: 0              // No limit on the connection queue
 });
 
 console.log(process.env.DB_USER);
 console.log(process.env.DB_PASS);
-
-db.connect(err => {
-  if (err) {
-    console.error('Database connection failed:', err);
-    process.exit(1); // Exit on failure
-  }
-  console.log('Connected to MySQL database.');
-});
 
 // User Registration
 app.post('/register', async (req, res) => {
@@ -46,41 +64,32 @@ app.post('/register', async (req, res) => {
 
   try {
     const query = 'SELECT * FROM users WHERE email = ?';
-    db.query(query, [email], async (err, results) => {
-      if (err) {
-        return res.status(500).json({ message: 'Database error' });
-      }
-      if (results.length > 0) {
-        return res.status(400).json({ message: 'Email already registered.' });
-      }
+    const [results] = await db.execute(query, [email]); // Use connection pool here
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+    if (results.length > 0) {
+      return res.status(400).json({ message: 'Email already registered.' });
+    }
 
-      const insertQuery = 'INSERT INTO users (email, password_hash, phone) VALUES (?, ?, ?)';
-      db.query(insertQuery, [email, hashedPassword, phone || null], (err, result) => {
-        if (err) {
-          return res.status(500).json({ message: 'Error creating user.' });
-        }
-        res.status(201).json({ message: 'User registered successfully.' });
-      });
-    });
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const insertQuery = 'INSERT INTO users (email, password_hash, phone) VALUES (?, ?, ?)';
+    await db.execute(insertQuery, [email, hashedPassword, phone || null]); // Use connection pool here
+    res.status(201).json({ message: 'User registered successfully.' });
   } catch (error) {
     res.status(500).json({ message: 'Server error.' });
   }
 });
 
 // User Login
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required.' });
   }
 
   const query = 'SELECT * FROM users WHERE email = ?';
-  db.query(query, [email], async (err, results) => {
-    if (err) {
-      return res.status(500).json({ message: 'Database error' });
-    }
+  try {
+    const [results] = await db.execute(query, [email]); // Use connection pool here
     if (results.length === 0) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -94,7 +103,9 @@ app.post('/login', (req, res) => {
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET || 'supersecret', { expiresIn: '2h' });
 
     res.status(200).json({ message: 'Login successful', token });
-  });
+  } catch (err) {
+    res.status(500).json({ message: 'Database error' });
+  }
 });
 
 // Fetch Stock Data
@@ -112,9 +123,9 @@ app.get("/api/stock", async (req, res) => {
 });
 
 // Track Stock
-app.post("/api/track-stock", (req, res) => {
+app.post("/api/track-stock", async (req, res) => {
   const { tickerSymbol } = req.body;  // Get ticker symbol from the body
-  const token = req.headers['authorization'].replace(/^Bearer\s/, ""); // Extract token from headers
+  const token = req.headers['authorization']?.replace(/^Bearer\s/, ""); // Extract token from headers
 
   if (!token) {
     return res.status(401).json({ error: "Authentication required" });
@@ -125,7 +136,7 @@ app.post("/api/track-stock", (req, res) => {
   }
 
   // Verify the JWT token and extract user info
-  jwt.verify(token, process.env.JWT_SECRET || 'supersecret', (err, decoded) => {
+  jwt.verify(token, process.env.JWT_SECRET || 'supersecret', async (err, decoded) => {
     if (err) {
       console.error('Token verification failed:', err); // Log error here
       return res.status(401).json({ error: "Invalid or expired token" });
@@ -135,120 +146,17 @@ app.post("/api/track-stock", (req, res) => {
 
     // Check if stock is already tracked
     const checkQuery = "SELECT * FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
-    db.query(checkQuery, [userId, tickerSymbol], (err, results) => {
-        if (err) {
-            console.error("Error checking tracked stocks:", err);
-            return res.status(500).json({ error: "Failed to check tracked stocks" });
-        }
+    const [results] = await db.execute(checkQuery, [userId, tickerSymbol]); // Use connection pool here
 
-        if (results.length > 0) {
-            return res.status(400).json({ message: "Stock is already being tracked" });
-        }
+    if (results.length > 0) {
+      return res.status(400).json({ message: "Stock is already being tracked" });
+    }
 
-        // Insert the tracked stock into the database
-        const query = "INSERT INTO tracked_stocks (user_id, ticker_symbol) VALUES (?, ?)";
-        db.query(query, [userId, tickerSymbol], (err, result) => {
-          if (err) {
-            console.error("Error tracking stock:", err);
-            return res.status(500).json({ error: "Failed to track the stock" });
-          }
-          res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
-        });
-    });
+    // Insert the tracked stock into the database
+    const query = "INSERT INTO tracked_stocks (user_id, ticker_symbol) VALUES (?, ?)";
+    await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
+    res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
   });
-});
-
-app.get("/tracked_stocks", (req, res) => {
-    const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
-
-    console.log("Received token in request header:", token);
-
-    if (!token) {
-        return res.status(401).json({ error: "Authentication required" });
-    }
-
-
-    // Verify the JWT token and extract user info
-    jwt.verify(token, process.env.JWT_SECRET || 'supersecret', async (err, decoded) => {
-        if (err) {
-            console.error('Token verification failed:', err); // Log error here
-            return res.status(401).json({ error: "Invalid or expired token" });
-        }
-
-        const userId = decoded.userId;
-
-        // Query the database to get all tracked stocks for the logged-in user
-        const query = "SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?";
-        db.query(query, [userId], async (err, results) => {
-            if (err) {
-                console.error("Error retrieving tracked stocks:", err);
-                return res.status(500).json({ error: "Failed to retrieve tracked stocks" });
-            }
-
-            if (results.length === 0) {
-                return res.status(200).json([]); // No tracked stocks
-            }
-
-            // Now we need to fetch the stock prices
-            const stockSymbols = results.map(row => row.ticker_symbol);
-
-            // Fetch all stock prices asynchronously
-            const stockPricePromises = stockSymbols.map(symbol => {
-                return yf.quote(symbol)
-                    .then(stockData => ({
-                        ticker: symbol,
-                        price: stockData.regularMarketPrice || 'Price not available'
-                    }))
-                    .catch(() => ({
-                        ticker: symbol,
-                        price: 'Error fetching price'
-                    }));
-            });
-
-            try {
-                // Wait for all stock price fetches to complete
-                const stockPrices = await Promise.all(stockPricePromises);
-                res.status(200).json(stockPrices);
-            } catch (error) {
-                console.error('Error fetching stock prices:', error);
-                res.status(500).json({ error: 'Error fetching stock prices' });
-            }
-        });
-    });
-});
-
-//untrack stock
-app.post('/untrack-stock', (req, res) => {
-    const { tickerSymbol } = req.body;
-    const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
-
-    if (!token) {
-        return res.status(401).json({ error: "Authentication required" });
-    }
-
-    jwt.verify(token, process.env.JWT_SECRET || 'supersecret', (err, decoded) => {
-        if (err) {
-            console.error('Token verification failed:', err);
-            return res.status(401).json({ error: "Invalid or expired token" });
-        }
-
-        const userId = decoded.userId;
-
-        // Remove the stock from the tracked stocks table
-        const query = "DELETE FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
-        db.query(query, [userId, tickerSymbol], (err, results) => {
-            if (err) {
-                console.error("Error untracking stock:", err);
-                return res.status(500).json({ error: "Failed to untrack stock" });
-            }
-
-            if (results.affectedRows === 0) {
-                return res.status(404).json({ message: "Stock not found in tracked stocks" });
-            }
-
-            res.status(200).json({ message: `${tickerSymbol} has been untracked` });
-        });
-    });
 });
 
 // Start server

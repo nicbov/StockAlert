@@ -10,7 +10,6 @@ require('dotenv').config({ path: './creds.env' });
 const mysql = require('mysql2/promise');
 const yahooFinance = require('yahoo-finance2').default;
 const nodemailer = require('nodemailer');
-const twilio = require('twilio');
 
 const pool = mysql.createPool({
     host: 'localhost', 
@@ -30,84 +29,100 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// Set this in your scheduler (server.js) as 'open', 'midday', or 'close'
+async function runStockAlerts(phase) {
+    const validPhases = ['open', 'midday', 'close'];
+    if (!validPhases.includes(phase)) {
+        console.error(`Invalid phase "${phase}". Must be one of: ${validPhases.join(', ')}`);
+        return;
+    }
 
-async function runStockAlerts() {
     const connection = await pool.getConnection();
     try {
-        console.log("Running stock tracking process...");
+        console.log(`Running stock alerts for phase: ${phase}`);
 
-        // Fetch tracked stocks
         const [rows] = await connection.query("SELECT ticker_symbol FROM tracked_stocks");
         const trackedStocks = rows.map(row => row.ticker_symbol);
 
         for (let stock of trackedStocks) {
             try {
                 const result = await yahooFinance.quote(stock);
-
                 if (result && result.regularMarketPrice) {
                     const price = result.regularMarketPrice;
-                    console.log(`Fetched: ${stock} - Price: ${price}`);
+                    console.log(`Fetched: ${stock} - ${price} (${phase})`);
 
-                    // Store the price
+                    // Insert price with phase label
                     await connection.query(
-                        "INSERT INTO stock_price_history (stock_symbol, price) VALUES (?, ?)",
-                        [stock, price]
+                        "INSERT INTO stock_price_history (stock_symbol, price, phase) VALUES (?, ?, ?)",
+                        [stock, price, phase]
                     );
 
-                    // Check for alerts
-                    await checkAndTriggerAlerts(connection, stock, price);
+                    // Check alerts (only for midday or close)
+                    if (phase !== 'open') {
+                        await checkAndTriggerAlerts(connection, stock, price, phase);
+                    }
                 }
             } catch (error) {
                 console.error(`Error fetching data for ${stock}:`, error);
             }
         }
 
-        // Clear old records
+        // Leave this unchanged
         await clearOldRecords(connection);
 
     } catch (error) {
-        console.error("Error running stock tracking:", error);
+        console.error("Error in runStockAlerts:", error);
     } finally {
         connection.release();
     }
 }
 
-async function checkAndTriggerAlerts(connection, stock, currentPrice) {
+async function checkAndTriggerAlerts(connection, stock, currentPrice, phase) {
     try {
-        const [prices] = await connection.query(
-            `SELECT price, TIMESTAMPDIFF(MINUTE, timestamp, NOW()) as timeDiff 
-             FROM stock_price_history 
-             WHERE stock_symbol = ? 
-             ORDER BY timestamp DESC 
-             LIMIT 2`, 
+        const [rows] = await connection.query(
+            `SELECT phase, price FROM stock_price_history 
+             WHERE stock_symbol = ? AND DATE(timestamp) = CURDATE()`,
             [stock]
         );
 
-        if (prices.length < 2) return;
-
-        const [latest, previous] = prices;
-        const alertMessage = shouldTriggerAlert(previous.price, currentPrice, latest.timeDiff);
-
-        if (alertMessage) {
-            console.log(`Triggering alert for ${stock}: ${alertMessage}`);
-            await sendAlerts(connection, stock, alertMessage);
+        const prices = {};
+        for (let row of rows) {
+            prices[row.phase] = row.price;
         }
+
+        const alerts = [];
+
+        if (phase === 'midday' && prices.open) {
+            const change = Math.abs((currentPrice - prices.open) / prices.open * 100);
+            if (change >= 1.0) {
+                alerts.push(`ALERT: ${stock} moved ${change.toFixed(2)}% from open to midday`);
+            }
+        }
+
+        if (phase === 'close') {
+            if (prices.open) {
+                const changeFromOpen = Math.abs((currentPrice - prices.open) / prices.open * 100);
+                if (changeFromOpen >= 1.5) {
+                    alerts.push(`ALERT: ${stock} moved ${changeFromOpen.toFixed(2)}% from open to close`);
+                }
+            }
+
+            if (prices.midday) {
+                const changeFromMidday = Math.abs((currentPrice - prices.midday) / prices.midday * 100);
+                if (changeFromMidday >= 1.5) {
+                    alerts.push(`ALERT: ${stock} moved ${changeFromMidday.toFixed(2)}% from midday to close`);
+                }
+            }
+        }
+
+        for (let message of alerts) {
+            console.log(`Triggering alert for ${stock}: ${message}`);
+            await sendAlerts(connection, stock, message);
+        }
+
     } catch (error) {
-        console.error("Error checking for alerts:", error);
+        console.error(`Error checking alerts for ${stock}:`, error);
     }
-}
-
-function shouldTriggerAlert(previousPrice, currentPrice, timeFrameMinutes) {
-    const priceChange = Math.abs(((currentPrice - previousPrice) / previousPrice) * 100);
-
-    if (Math.abs(priceChange) >= 1.5 && timeFrameMinutes <= 30) {
-        return `ALERT: ${priceChange.toFixed(2)}% move in ${timeFrameMinutes} min!`;
-    }
-    if (Math.abs(priceChange) >= 3 && timeFrameMinutes <= 120) {
-        return `ALERT: ${priceChange.toFixed(2)}% move in ${timeFrameMinutes} min!`;
-    }
-    return null;
 }
 
 async function sendAlerts(connection, stock, alertMessage) {
@@ -115,13 +130,12 @@ async function sendAlerts(connection, stock, alertMessage) {
         const [users] = await connection.query(
             `SELECT users.email, users.phone FROM users
              JOIN tracked_stocks ON users.id = tracked_stocks.user_id
-             WHERE tracked_stocks.ticker_symbol = ?`, 
+             WHERE tracked_stocks.ticker_symbol = ?`,
             [stock]
         );
 
         for (let user of users) {
             if (user.email) await sendEmailAlert(user.email, stock, alertMessage);
-            if (user.phone) await sendSMSAlert(user.phone, stock, alertMessage);
         }
     } catch (error) {
         console.error("Error sending alerts:", error);
@@ -138,23 +152,11 @@ async function sendEmailAlert(email, stock, message) {
         });
         console.log(`Email alert sent to ${email}`);
     } catch (error) {
-        console.error(`Error sending email to ${email}:`, error);
+        console.error(`Email failed (${email}):`, error);
     }
 }
 
-async function sendSMSAlert(phone, stock, message) {
-    try {
-        await twilioClient.messages.create({
-            body: `Stock Alert for ${stock}: ${message}`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: phone
-        });
-        console.log(`SMS alert sent to ${phone}`);
-    } catch (error) {
-        console.error(`Error sending SMS to ${phone}:`, error);
-    }
-}
-
+// DO NOT TOUCH
 async function clearOldRecords(connection) {
     try {
         const query = "DELETE FROM stock_price_history WHERE timestamp < NOW() - INTERVAL 2 DAY";
