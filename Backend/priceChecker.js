@@ -53,7 +53,7 @@ async function runStockAlerts(phase) {
 
                     // Insert price with phase label
                     await connection.query(
-                        "INSERT INTO stock_price_history (stock_symbol, price, phase) VALUES (?, ?, ?)",
+                        "INSERT INTO stock_price_history (stock_symbol, price, market_event) VALUES (?, ?, ?)",
                         [stock, price, phase]
                     );
 
@@ -80,7 +80,7 @@ async function runStockAlerts(phase) {
 async function checkAndTriggerAlerts(connection, stock, currentPrice, phase) {
     try {
         const [rows] = await connection.query(
-            `SELECT phase, price FROM stock_price_history 
+            `SELECT market_event, price FROM stock_price_history 
              WHERE stock_symbol = ? AND DATE(timestamp) = CURDATE()`,
             [stock]
         );
