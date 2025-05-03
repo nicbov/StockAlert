@@ -5,10 +5,18 @@ const showPage = (pageId) => {
     document.getElementById("login-form-container").style.display = "none";
     document.getElementById("register-form-container").style.display = "none";
     document.getElementById("stock-price-container").style.display = "none";
+    document.getElementById("trackedStocksContainer").style.display = "none";
 
     // Show the requested page
     document.getElementById(pageId).style.display = "block";
+
+    // If the Stock Price page is being shown, also show tracked stocks
+    if (pageId === "stock-price-container") {
+        displayTrackedStocks(); // Ensure tracked stocks are displayed on stock price page
+    }
 };
+
+
 
 // Function to get stock price from the backend API
 const getStockPrice = async () => {
@@ -85,6 +93,7 @@ const trackStock = async () =>{
     if (response.ok) {
         alert(`${symbol.toUpperCase()} is now being tracked!`);
         document.getElementById("trackStockButton").style.display = "none"; // Hide button after tracking
+        displayTrackedStocks();
     } else {
         alert('Error: ' + data.message);
     }
@@ -175,6 +184,103 @@ const handleLogin = async (event) => {
         alert('Error: ' + error.message);
     }
 };
+
+// Fetch and display tracked stocks
+const displayTrackedStocks = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+        alert('You must be logged in to see tracked stocks');
+        return;
+    }
+
+    try {
+        const response = await fetch('/get-tracked-stocks', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            }
+        });
+
+        const data = await response.json();
+        console.log('Tracked Stocks Data:', data);  // Log the data to verify it
+
+        const trackedStocksContainer = document.getElementById("trackedStocksList");
+
+        if (data.stocks && data.stocks.length > 0) {
+            trackedStocksContainer.innerHTML = ''; // Clear existing stocks
+
+            data.stocks.forEach(stock => {
+                console.log('Stock:', stock);  // Log individual stock data
+
+                const stockDiv = document.createElement("div");
+                stockDiv.classList.add("stock-box");
+
+                // Display ticker and price
+                stockDiv.innerHTML = `
+                    <div class="stock-info">
+                        <h3>${stock.ticker}</h3>  <!-- Display ticker -->
+                        <p>Price: $${stock.price}</p>  <!-- Display price -->
+                    </div>
+                    <button class="untrack-btn" data-symbol="${stock.ticker}">Untrack</button>
+                `;
+                
+                trackedStocksContainer.appendChild(stockDiv);
+            });
+
+            // Show the tracked stocks section
+            document.getElementById('trackedStocksContainer').style.display = 'block';
+        } else {
+            trackedStocksContainer.innerHTML = "<p>No stocks are being tracked yet.</p>";
+        }
+
+
+        // Add event listeners to Untrack buttons
+        const untrackButtons = document.querySelectorAll(".untrack-btn");
+        untrackButtons.forEach(button => {
+            button.addEventListener("click", untrackStock); // Bind untrack function
+        });
+
+    } catch (error) {
+        console.error("Error fetching tracked stocks:", error);
+        alert('Error fetching tracked stocks');
+    }
+};
+
+
+// Function to untrack a stock
+const untrackStock = async (event) => {
+    const tickerSymbol = event.target.getAttribute("data-symbol");
+    const token = localStorage.getItem('token');
+
+    if (!token) {
+        alert("You must be logged in to untrack a stock.");
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/untrack-stock', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({ tickerSymbol })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            alert(`${tickerSymbol} has been untracked.`);
+            displayTrackedStocks(); 
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    }
+};
+
+
 
 // Attach event listeners to forms
 document.getElementById("register-form").addEventListener("submit", handleRegistration);

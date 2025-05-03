@@ -111,16 +111,36 @@ app.post('/login', async (req, res) => {
 // Fetch Stock Data
 app.get("/api/stock", async (req, res) => {
   const { symbol } = req.query;
-  if (!symbol) return res.status(400).json({ error: "Stock symbol is required" });
+  
+  if (!symbol) {
+    return res.status(400).json({ error: "Stock symbol is required" });
+  }
+
+  console.log(`Fetching stock data for symbol: ${symbol}`);
 
   try {
     const result = await yf.quote(symbol);
-    if (!result || !result.regularMarketPrice) throw new Error("Invalid stock symbol");
+    console.log("Stock data fetched:", result);
+    
+    // Check if the result is valid and contains a price
+    if (!result || !result.regularMarketPrice) {
+      throw new Error("Invalid stock symbol or price not found");
+    }
+
     res.json({ price: result.regularMarketPrice });
   } catch (error) {
+    console.error("Error fetching stock data:", error.message);
+    
+    // Check for specific "invalid symbol" error based on message or result
+    if (error.message.includes("Invalid stock symbol")) {
+      return res.status(400).json({ error: "Incorrectly spelled ticker symbol or not found" });
+    }
+
+    // Default to internal server error for other issues
     res.status(500).json({ error: "Failed to fetch stock data" });
   }
 });
+
 
 // Track Stock
 app.post("/api/track-stock", async (req, res) => {
@@ -158,6 +178,82 @@ app.post("/api/track-stock", async (req, res) => {
     res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
   });
 });
+
+app.get('/get-tracked-stocks', async (req, res) => {
+  const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
+
+  if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+      // Verify the JWT token and extract user info
+      jwt.verify(token, process.env.JWT_SECRET || 'supersecret', async (err, decoded) => {
+          if (err) {
+              return res.status(401).json({ error: 'Invalid or expired token' });
+          }
+
+          const userId = decoded.userId;
+
+          // Query for tracked stocks
+          const query = 'SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?';
+          const [results] = await db.execute(query, [userId]);
+
+          // Now fetch the stock prices for each tracked stock
+          const stocksWithPrices = [];
+          for (let stock of results) {
+              const priceData = await yf.quote(stock.ticker_symbol);
+              if (priceData && priceData.regularMarketPrice) {
+                  // Only return ticker and price
+                  stocksWithPrices.push({
+                      ticker: stock.ticker_symbol,
+                      price: priceData.regularMarketPrice.toFixed(2)  // Format price as $$$
+                  });
+              }
+          }
+
+          // Send back the stock data
+          res.json({ stocks: stocksWithPrices });
+      });
+  } catch (error) {
+      console.error("Error fetching tracked stocks:", error);
+      res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Untrack a Stock
+app.post('/api/untrack-stock', async (req, res) => {
+  const { tickerSymbol } = req.body;
+  const token = req.headers['authorization']?.replace(/^Bearer\s/, "");
+
+  if (!token) {
+      return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (!tickerSymbol) {
+      return res.status(400).json({ error: "Stock symbol is required" });
+  }
+
+  try {
+      // Verify the JWT token and extract user info
+      jwt.verify(token, process.env.JWT_SECRET || 'supersecret', async (err, decoded) => {
+          if (err) {
+              return res.status(401).json({ error: 'Invalid or expired token' });
+          }
+
+          const userId = decoded.userId;
+
+          // Delete the tracked stock
+          const query = "DELETE FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
+          await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
+          res.status(200).json({ message: `${tickerSymbol.toUpperCase()} has been untracked` });
+      });
+  } catch (error) {
+      console.error("Error untracking stock:", error);
+      res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 // Start server
 const PORT = process.env.PORT || 3000;
