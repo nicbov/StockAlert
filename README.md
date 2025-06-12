@@ -9,7 +9,6 @@ It sends notifications via email and SMS when certain stock conditions are trigg
 
 - Real-time stock monitoring  
 - Email alerts (sent from **stockalertofficial@gmail.com**)  
-- SMS alerts using Twilio  
 - User authentication using JWT  
 - Persistent data storage with MySQL/MariaDB  
 
@@ -20,9 +19,8 @@ It sends notifications via email and SMS when certain stock conditions are trigg
 ### Prerequisites
 
 - Node.js (v14+)  
-- MySQL or MariaDB server  
-- Twilio account for SMS notifications  
-- Gmail account for sending alert emails  
+- MySQL or MariaDB server   
+- Gmail account for recieving
 
 ---
 
