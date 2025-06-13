@@ -31,10 +31,14 @@ clone github repo using link provided in github
 In Bash:
 
 cd stock-alert
+
 npm install
-Environment Variables Setup
-Create a creds.env file in the "Backend" directory of the project with the following variables:
-You need to fill in these secrets with your own values for the app to work, the email service and pass are provided so
+
+Environment Variables Setup:
+
+Create a creds.env file in the "Backend" directory of the project with the following variables: 
+
+You need to fill in these secrets with your own values below for the app to work, the email service and pass are provided so
 you dont have to set up a nodemailer service yourself
 
 creds.env file:
