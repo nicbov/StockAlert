@@ -87,7 +87,8 @@ async function checkAndTriggerAlerts(connection, stock, currentPrice, phase) {
 
         const prices = {};
         for (let row of rows) {
-            prices[row.phase] = row.price;
+            // FIXED: Changed row.phase to row.market_event
+            prices[row.market_event] = row.price;
         }
 
         const alerts = [];

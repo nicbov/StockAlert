@@ -79,7 +79,8 @@ const trackStock = async () =>{
     }
 
     try {
-        const response = await fetch('http://localhost:3000/api/track-stock', {
+        // FIXED: Use relative path instead of hardcoded localhost
+        const response = await fetch('/api/track-stock', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

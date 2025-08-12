@@ -46,14 +46,15 @@ const db = mysql.createPool({
   host: 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASS || '',
-  database: 'stock_alert',
+  database: process.env.DB_NAME || 'stock_alert',
   waitForConnections: true,  // Wait for a connection if the pool is busy
   connectionLimit: 10,       // Limit of concurrent connections
   queueLimit: 0              // No limit on the connection queue
 });
 
-console.log(process.env.DB_USER);
-console.log(process.env.DB_PASS);
+console.log('Database connection pool created');
+console.log('DB User:', process.env.DB_USER);
+console.log('DB Name:', process.env.DB_NAME);
 
 // User Registration
 app.post('/register', async (req, res) => {
@@ -76,6 +77,7 @@ app.post('/register', async (req, res) => {
     await db.execute(insertQuery, [email, hashedPassword, phone || null]); // Use connection pool here
     res.status(201).json({ message: 'User registered successfully.' });
   } catch (error) {
+    console.error('Registration error:', error);
     res.status(500).json({ message: 'Server error.' });
   }
 });
@@ -104,6 +106,7 @@ app.post('/login', async (req, res) => {
 
     res.status(200).json({ message: 'Login successful', token });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ message: 'Database error' });
   }
 });
@@ -164,18 +167,23 @@ app.post("/api/track-stock", async (req, res) => {
 
     const userId = decoded.userId;
 
-    // Check if stock is already tracked
-    const checkQuery = "SELECT * FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
-    const [results] = await db.execute(checkQuery, [userId, tickerSymbol]); // Use connection pool here
+    try {
+      // Check if stock is already tracked
+      const checkQuery = "SELECT * FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
+      const [results] = await db.execute(checkQuery, [userId, tickerSymbol]); // Use connection pool here
 
-    if (results.length > 0) {
-      return res.status(400).json({ message: "Stock is already being tracked" });
+      if (results.length > 0) {
+        return res.status(400).json({ message: "Stock is already being tracked" });
+      }
+
+      // Insert the tracked stock into the database
+      const query = "INSERT INTO tracked_stocks (user_id, ticker_symbol) VALUES (?, ?)";
+      await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
+      res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
+    } catch (error) {
+      console.error('Track stock error:', error);
+      res.status(500).json({ error: "Database error" });
     }
-
-    // Insert the tracked stock into the database
-    const query = "INSERT INTO tracked_stocks (user_id, ticker_symbol) VALUES (?, ?)";
-    await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
-    res.status(200).json({ message: `${tickerSymbol.toUpperCase()} is now being tracked!` });
   });
 });
 
@@ -195,25 +203,39 @@ app.get('/get-tracked-stocks', async (req, res) => {
 
           const userId = decoded.userId;
 
-          // Query for tracked stocks
-          const query = 'SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?';
-          const [results] = await db.execute(query, [userId]);
+          try {
+            // Query for tracked stocks
+            const query = 'SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?';
+            const [results] = await db.execute(query, [userId]);
 
-          // Now fetch the stock prices for each tracked stock
-          const stocksWithPrices = [];
-          for (let stock of results) {
-              const priceData = await yf.quote(stock.ticker_symbol);
-              if (priceData && priceData.regularMarketPrice) {
-                  // Only return ticker and price
+            // Now fetch the stock prices for each tracked stock
+            const stocksWithPrices = [];
+            for (let stock of results) {
+                try {
+                  const priceData = await yf.quote(stock.ticker_symbol);
+                  if (priceData && priceData.regularMarketPrice) {
+                      // Only return ticker and price
+                      stocksWithPrices.push({
+                          ticker: stock.ticker_symbol,
+                          price: priceData.regularMarketPrice.toFixed(2)  // Format price as $$$
+                      });
+                  }
+                } catch (error) {
+                  console.error(`Error fetching price for ${stock.ticker_symbol}:`, error);
+                  // Still include the stock but with error price
                   stocksWithPrices.push({
-                      ticker: stock.ticker_symbol,
-                      price: priceData.regularMarketPrice.toFixed(2)  // Format price as $$$
+                    ticker: stock.ticker_symbol,
+                    price: 'Error'
                   });
-              }
-          }
+                }
+            }
 
-          // Send back the stock data
-          res.json({ stocks: stocksWithPrices });
+            // Send back the stock data
+            res.json({ stocks: stocksWithPrices });
+          } catch (error) {
+            console.error('Database error:', error);
+            res.status(500).json({ error: "Database error" });
+          }
       });
   } catch (error) {
       console.error("Error fetching tracked stocks:", error);
@@ -243,10 +265,15 @@ app.post('/api/untrack-stock', async (req, res) => {
 
           const userId = decoded.userId;
 
-          // Delete the tracked stock
-          const query = "DELETE FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
-          await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
-          res.status(200).json({ message: `${tickerSymbol.toUpperCase()} has been untracked` });
+          try {
+            // Delete the tracked stock
+            const query = "DELETE FROM tracked_stocks WHERE user_id = ? AND ticker_symbol = ?";
+            await db.execute(query, [userId, tickerSymbol]); // Use connection pool here
+            res.status(200).json({ message: `${tickerSymbol.toUpperCase()} has been untracked` });
+          } catch (error) {
+            console.error('Untrack stock error:', error);
+            res.status(500).json({ error: "Database error" });
+          }
       });
   } catch (error) {
       console.error("Error untracking stock:", error);
