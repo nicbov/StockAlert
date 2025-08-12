@@ -1,4 +1,4 @@
-/* 🌙 General Styles */
+/*  General Styles */
 body {
     font-family: 'Arial', sans-serif;
     background-color: #1B1F3B; /* Soft Dark Navy Blue */
@@ -8,7 +8,7 @@ body {
     padding: 0;
 }
 
-/* 📌 Center the App */
+/*  Center the App */
 .container {
     width: 90%;
     max-width: 500px;
@@ -24,14 +24,14 @@ body {
     transform: translateY(-3px);
 }
 
-/* 🏷️ Title */
+/* Title */
 h1 {
     font-size: 28px;
     color: white;
     margin-bottom: 20px;
 }
 
-/* 📥 Input Field */
+/*  Input Field */
 input {
     width: 80%;
     padding: 12px;
@@ -51,7 +51,7 @@ input:focus {
     background-color: #2C2F48;
 }
 
-/* 🎯 Button Styles */
+/*  Button Styles */
 button {
     margin-top: 15px;
     padding: 12px 20px;
@@ -71,7 +71,7 @@ button:hover {
     color: white;
 }
 
-/* 📊 Stock Price Result */
+/*  Stock Price Result */
 #result {
     margin-top: 20px;
     font-size: 22px;
