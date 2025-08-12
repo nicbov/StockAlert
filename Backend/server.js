@@ -17,7 +17,7 @@ const cron = require('node-cron');
 
 app.use(express.json()); // Parse JSON requests
 
-// ⏰ Scheduled stock alert phases (Mon-Fri, EST)
+// Scheduled stock alert phases (Mon-Fri, EST)
 cron.schedule('30 9 * * 1-5', () => {
   console.log('Running OPEN phase stock alerts...');
   runStockAlerts('open');
@@ -33,7 +33,7 @@ cron.schedule('0 16 * * 1-5', () => {
   runStockAlerts('close');
 }, { timezone: 'America/New_York' });
 
-console.log('✅ Stock alert cron jobs scheduled.');
+console.log(' Stock alert cron jobs scheduled.');
 
 app.use(express.static(__dirname + '/../Frontend'));
 
@@ -208,7 +208,7 @@ app.get('/get-tracked-stocks', async (req, res) => {
             const query = 'SELECT ticker_symbol FROM tracked_stocks WHERE user_id = ?';
             const [results] = await db.execute(query, [userId]);
 
-            // Now fetch the stock prices for each tracked stock
+            // fetch the stock prices for each tracked stock
             const stocksWithPrices = [];
             for (let stock of results) {
                 try {
