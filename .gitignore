@@ -61,3 +61,4 @@ parcel-cache/
 *.seed
 *.pid.lock
 
+Backend/creds.env
